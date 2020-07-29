@@ -32,7 +32,7 @@ func init() {
 	}
 
 	flag.StringVar(&fromFile, "fromfile", "", "Specify paths to archive via a file, one path per line")
-	flag.StringVar(&basePath, "basepath", "", "Strip off the base path from all paths and transfer "+
+	flag.StringVar(&basePath, "basepath", "", "Strip off the base path from all paths and transfer " +
 		"relative to this path. Note that any leading / will be stripped by default")
 	flag.StringVar(&sshUser, "sshuser", "root", "SSH user")
 	flag.StringVar(&sshServer, "sshserver", "", "SSH server to archive to")
@@ -60,8 +60,7 @@ func init() {
 		log.Fatalln("only one of the options: -fromfile or space separated file paths is allowed")
 	}
 	if fromFile != "" {
-		paths, err = readLinesFromFile(fromFile)
-		if err != nil {
+		paths, err = readLinesFromFile(fromFile); if err != nil {
 			log.Fatalln(err)
 		}
 	}
@@ -129,7 +128,7 @@ func cleanAndTrimForTar(path string, basePath string) string {
 }
 
 func writeTarHeaders(tw *tar.Writer, info os.FileInfo, path string, newPath string) error {
-	fmt.Printf("add %v -> %v\n", path, newPath)
+	fmt.Printf("%v -> %v\n", path, newPath)
 	if h, err := tar.FileInfoHeader(info, newPath); err != nil {
 		return err
 	} else {
@@ -141,7 +140,7 @@ func writeTarHeaders(tw *tar.Writer, info os.FileInfo, path string, newPath stri
 	return nil
 }
 
-func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Session, wg *sync.WaitGroup, errs chan<- error) {
+func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Session, wg *sync.WaitGroup, errs chan <-error) {
 	defer wg.Done()
 	defer session.Close()
 	stdin, err := session.StdinPipe()
@@ -186,7 +185,7 @@ func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Sessi
 	}
 }
 
-func createAndExtract(session *ssh.Session, destPath string, wg *sync.WaitGroup, errs chan<- error) {
+func createAndExtract(session *ssh.Session, destPath string, wg *sync.WaitGroup, errs chan <-error) {
 	defer wg.Done()
 	defer session.Wait()
 	err := session.Start("tar -xf - -C " + destPath)
@@ -205,7 +204,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 		}
 		return nil, err
 	}
-	signer, err := ssh.ParsePrivateKey(pKey)
+	signer, err := ssh.ParsePrivateKey(pKey);
 	if err != nil {
 		return nil, fmt.Errorf("could not parse private key %v", sshKeyPath)
 	}
@@ -213,7 +212,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 	if noVerify {
 		hostKeyCallBack = ssh.InsecureIgnoreHostKey()
 	} else if knownHostsFile != "" {
-		hostKeyCallBack, err = knownhosts.New(knownHostsFile)
+		hostKeyCallBack, err = knownhosts.New(knownHostsFile);
 		if err != nil {
 			return nil, fmt.Errorf("could not create hostkeycallback function: %v", err)
 		}
@@ -231,7 +230,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 		HostKeyCallback: hostKeyCallBack,
 		Timeout:         time.Minute,
 	}
-	client, err := ssh.Dial("tcp", server+":"+strconv.Itoa(port), clientConfig)
+	client, err := ssh.Dial("tcp", server+ ":" + strconv.Itoa(port), clientConfig)
 	if err != nil {
 		return nil, err
 	}
