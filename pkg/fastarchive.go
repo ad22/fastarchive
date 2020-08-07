@@ -1,14 +1,13 @@
 package main
 
 import (
-	"archive/tar"
 	"bufio"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/mholt/archiver/v3"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -20,7 +19,7 @@ import (
 	"time"
 )
 
-var fromFile, basePath, destPath, sshServer, sshUser, sshKeyPath, knownHostsFile string
+var fromFile, destPath, server, userName, sshKeyPath, knownHostsFile string
 var noVerify bool
 var port int
 var paths []string
@@ -32,20 +31,21 @@ func init() {
 	}
 
 	flag.StringVar(&fromFile, "fromfile", "", "Specify paths to archive via a file, one path per line")
-	flag.StringVar(&basePath, "basepath", "", "Strip off the base path from all paths and transfer " +
-		"relative to this path. Note that any leading / will be stripped by default")
-	flag.StringVar(&sshUser, "sshuser", "root", "SSH user")
-	flag.StringVar(&sshServer, "sshserver", "", "SSH server to archive to")
-	flag.IntVar(&port, "sshport", 22, "SSH port to use")
+	flag.StringVar(&destPath, "destpath", "", "Destination path to archive to")
+
+	flag.StringVar(&server, "server", "", "SSH server to archive to (SSH or artifactory HTTP)")
+	flag.IntVar(&port, "port", 22, "Server port to use (SSH or artifactory)")
+	flag.StringVar(&userName, "user", "root", "Username (SSH or artifactory)")
+
 	flag.StringVar(&sshKeyPath, "sshkeypath", filepath.Join(usr.HomeDir, ".ssh", "id_rsa"), "SSH Private key to authenticate against the server")
 	flag.BoolVar(&noVerify, "sshnoverify", false, "Do not verify SSH host key")
 	flag.StringVar(&knownHostsFile, "sshknownhostspath", filepath.Join(usr.HomeDir, ".ssh", "known_hosts"), "SSH Known hosts file")
-	flag.StringVar(&destPath, "destpath", "", "Destination path to archive to")
+
 	flag.Parse()
 	paths = flag.Args()
-	if sshServer == "" {
+	if server == "" {
 		flag.Usage()
-		log.Fatalln("argument -sshserver is required")
+		log.Fatalln("argument -server is required")
 	}
 	if destPath == "" {
 		flag.Usage()
@@ -67,7 +67,7 @@ func init() {
 }
 
 func main() {
-	session, err := createSSHSession(sshUser, sshServer, port, sshKeyPath, knownHostsFile, noVerify)
+	session, err := createSSHSession(userName, server, port, sshKeyPath, knownHostsFile, noVerify)
 	errs := make(chan error)
 	finished := make(chan bool, 1)
 	if err != nil {
@@ -76,7 +76,7 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go createAndExtract(session, destPath, &wg, errs)
-	go writeArchivesRecurse(paths, basePath, session, &wg, errs)
+	go generateArchiverStream(paths, session, &wg, errs)
 	go func() {
 		wg.Wait()
 		close(finished)
@@ -110,14 +110,8 @@ func readLinesFromFile(path string) ([]string, error) {
 	return lines, nil
 }
 
-func cleanAndTrimForTar(path string, basePath string) string {
+func cleanPath(path string) string {
 	newPath := filepath.Clean(path)
-	basePath = filepath.Clean(basePath)
-	if basePath != "" {
-		if strings.HasPrefix(newPath, basePath) {
-			newPath = strings.TrimPrefix(newPath, basePath)
-		}
-	}
 	volumeName := filepath.VolumeName(newPath)
 	if volumeName != "" {
 		newPath = strings.TrimLeft(newPath, volumeName)
@@ -127,20 +121,7 @@ func cleanAndTrimForTar(path string, basePath string) string {
 	return newPath
 }
 
-func writeTarHeaders(tw *tar.Writer, info os.FileInfo, path string, newPath string) error {
-	fmt.Printf("%v -> %v\n", path, newPath)
-	if h, err := tar.FileInfoHeader(info, newPath); err != nil {
-		return err
-	} else {
-		h.Name = newPath
-		if err = tw.WriteHeader(h); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Session, wg *sync.WaitGroup, errs chan <-error) {
+func generateArchiverStream(srcPaths []string, session *ssh.Session, wg *sync.WaitGroup, errs chan <-error) {
 	defer wg.Done()
 	defer session.Close()
 	stdin, err := session.StdinPipe()
@@ -149,8 +130,26 @@ func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Sessi
 		return
 	}
 	defer stdin.Close()
-	tw := tar.NewWriter(stdin)
-	defer tw.Close()
+
+	t := archiver.Tar{
+		MkdirAll:               true,
+		ContinueOnError:        false,
+		OverwriteExisting:      true,
+		ImplicitTopLevelFolder: false,
+	}
+	defer t.Close()
+	tgz := archiver.TarGz{
+		Tar:              &t,
+		CompressionLevel: 3,
+		SingleThreaded:   false,
+	}
+	defer tgz.Close()
+
+	err = tgz.Create(stdin)
+	if err != nil {
+		errs <- err
+		return
+	}
 
 	walkFn := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -162,17 +161,22 @@ func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Sessi
 		if len(path) == 0 {
 			return nil
 		}
-
 		fr, err := os.Open(path)
 		if err != nil {
 			return err
 		}
 		defer fr.Close()
-		newPath := cleanAndTrimForTar(path, basePath)
-		if err := writeTarHeaders(tw, info, path, newPath); err != nil {
+		fileInfo, err := fr.Stat()
+		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(tw, fr); err != nil {
+		cPath := cleanPath(path)
+		fmt.Printf("%v -> %v\n", path, cPath)
+		err = tgz.Write(archiver.File{FileInfo: archiver.FileInfo{
+			FileInfo: fileInfo, CustomName:cPath},
+			ReadCloser: fr,
+		})
+		if err != nil {
 			return err
 		}
 		return nil
@@ -180,15 +184,17 @@ func writeArchivesRecurse(srcPaths []string, basePath string, session *ssh.Sessi
 
 	for _, subPath := range srcPaths {
 		if err := filepath.Walk(subPath, walkFn); err != nil {
-			errs <- err
+				errs <- err
+				return
 		}
+		wg.Done()
 	}
 }
 
 func createAndExtract(session *ssh.Session, destPath string, wg *sync.WaitGroup, errs chan <-error) {
 	defer wg.Done()
 	defer session.Wait()
-	err := session.Start("tar -xf - -C " + destPath)
+	err := session.Start("tar -xzf - -C " + destPath)
 	if err != nil {
 		errs <- err
 	}
