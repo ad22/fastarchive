@@ -39,16 +39,6 @@ func generateZipWriter(writer io.Writer) (*archiver.Zip, error) {
 	return &z, err
 }
 
-func initDefaultTarGzWriter(writer io.Writer) error {
-	archiver.DefaultTarGz.CompressionLevel = 5
-	archiver.DefaultTarGz.OverwriteExisting = true
-	err := archiver.DefaultTarGz.Create(writer)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGroup, errs chan <-error, close bool, closePipe io.WriteCloser) {
 	defer wg.Done()
 	if close {
