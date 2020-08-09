@@ -1,26 +1,19 @@
 package main
 
 import (
-	"bufio"
-	"errors"
 	"flag"
 	"fmt"
 	"github.com/mholt/archiver/v3"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/user"
+	"path"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
 )
 
-var fromFile, destPath, server, userName, sshKeyPath, knownHostsFile string
-var noVerify bool
+var fromFile, destPath, server, userName, sshKeyPath, knownHostsFile, createLocalZipFileName, createLocalTarGzFileName string
+var noVerify, createLocalZip, createLocalTarGz bool
 var port int
 var paths []string
 
@@ -40,6 +33,11 @@ func init() {
 	flag.StringVar(&sshKeyPath, "sshkeypath", filepath.Join(usr.HomeDir, ".ssh", "id_rsa"), "SSH Private key to authenticate against the server")
 	flag.BoolVar(&noVerify, "sshnoverify", false, "Do not verify SSH host key")
 	flag.StringVar(&knownHostsFile, "sshknownhostspath", filepath.Join(usr.HomeDir, ".ssh", "known_hosts"), "SSH Known hosts file")
+
+	flag.BoolVar(&createLocalZip, "createzip", false, "Create a zip file in the current working directly with all contents streamed, and archive it alongside")
+	flag.BoolVar(&createLocalTarGz, "createtargz", false, "Create a tar gz file in the current working directly with all contents streamed, and archive it alongside")
+	flag.StringVar(&createLocalZipFileName, "zipname", "", "Name of zip file created when -createzip is used")
+	flag.StringVar(&createLocalTarGzFileName, "targzname", "", "Name of tar gz file created when -createtargz is used")
 
 	flag.Parse()
 	paths = flag.Args()
@@ -64,185 +62,113 @@ func init() {
 			log.Fatalln(err)
 		}
 	}
+
+	if createLocalZip && createLocalZipFileName == "" {
+		log.Fatalln("-zipname is required when -createzip is specified")
+	}
+	if createLocalTarGz && createLocalTarGzFileName == "" {
+		log.Fatalln("-targzname is required when -createtargz is specified")
+	}
 }
 
 func main() {
 	session, err := createSSHSession(userName, server, port, sshKeyPath, knownHostsFile, noVerify)
-	errs := make(chan error)
-	finished := make(chan bool, 1)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go createAndExtract(session, destPath, &wg, errs)
-	go generateArchiverStream(paths, session, &wg, errs)
-	go func() {
-		wg.Wait()
-		close(finished)
-	}()
+	defer session.Close()
 
-	select {
-	case <-finished:
-	case err := <-errs:
-		close(errs)
-		log.Fatalln("error: ", err)
-		return
+	// SSH goroutine wg
+	wgErrs := make(chan error)
+	wgFinished := make(chan bool, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// stream goroutine wg
+	swgErrs := make(chan error)
+	swgFinished := make(chan bool, 1)
+	var swg sync.WaitGroup
+	swg.Add(1)
+
+	stdinPipe, err := sshStdinPipe(session)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	var writers []archiver.Writer
+	tw, err := generateTarGzWriter(*stdinPipe)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	writers = append(writers, tw)
+
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	var z *archiver.Zip
+	if createLocalZip {
+		zp := path.Join(wd, createLocalZipFileName)
+		zf, err := os.Create(zp)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		defer zf.Close()
+
+		z, err = generateZipWriter(WriteFakeCloser{zf})
+		if err != nil {
+			log.Fatalln(err)
+		}
+		writers = append(writers, z)
+	}
+
+	var tfw *archiver.TarGz
+	if createLocalTarGz {
+		tp := path.Join(wd, createLocalTarGzFileName)
+		tf, err := os.Create(tp)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		defer tf.Close()
+		tfw, err = generateTarGzWriter(WriteFakeCloser{tf})
+		if err != nil {
+			log.Fatalln(err)
+		}
+		writers = append(writers, tfw)
+	}
+
+	serverExtractCommand := "tar -xzf - -C " + destPath
+	go sshCommandWait(serverExtractCommand, session, &wg, wgErrs)
+	go walkAndStream(paths, writers, &swg, swgErrs, false, nil)
+
+	err = processWg(&swg, swgFinished, swgErrs)
+	tfw.Close()
+	z.Close()
+	if err != nil {
+		tw.Close()
+		log.Fatalln(err)
+	}
+
+	var finalPaths []string
+	tw.CompressionLevel = 0
+	finalWriters := []archiver.Writer{tw}
+	if createLocalZip || createLocalTarGz {
+		wg.Add(1)
+		if createLocalZip {
+			finalPaths = append(finalPaths, createLocalZipFileName)
+		}
+		if createLocalTarGz {
+			finalPaths = append(finalPaths, createLocalTarGzFileName)
+		}
+		go walkAndStream(finalPaths, finalWriters, &wg, wgErrs, true, *stdinPipe)
+	} else {
+		tw.Close()
+	}
+
+	err = processWg(&wg, wgFinished, wgErrs)
+	if err != nil {
+		log.Fatalln(err)
 	}
 	fmt.Println("successfully uploaded")
-}
-
-func readLinesFromFile(path string) ([]string, error) {
-	var lines []string
-	file, err := os.Open(path)
-	if err != nil {
-		return lines, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		return lines, err
-	}
-	return lines, nil
-}
-
-func cleanPath(path string) string {
-	newPath := filepath.Clean(path)
-	volumeName := filepath.VolumeName(newPath)
-	if volumeName != "" {
-		newPath = strings.TrimLeft(newPath, volumeName)
-	}
-	newPath = filepath.ToSlash(newPath)
-	newPath = strings.TrimLeft(newPath, "/")
-	return newPath
-}
-
-func generateArchiverStream(srcPaths []string, session *ssh.Session, wg *sync.WaitGroup, errs chan <-error) {
-	defer wg.Done()
-	defer session.Close()
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		errs <- err
-		return
-	}
-	defer stdin.Close()
-
-	t := archiver.Tar{
-		MkdirAll:               true,
-		ContinueOnError:        false,
-		OverwriteExisting:      true,
-		ImplicitTopLevelFolder: false,
-	}
-	defer t.Close()
-	tgz := archiver.TarGz{
-		Tar:              &t,
-		CompressionLevel: 3,
-		SingleThreaded:   false,
-	}
-	defer tgz.Close()
-
-	err = tgz.Create(stdin)
-	if err != nil {
-		errs <- err
-		return
-	}
-
-	walkFn := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.Mode().IsDir() {
-			return nil
-		}
-		if len(path) == 0 {
-			return nil
-		}
-		fr, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer fr.Close()
-		fileInfo, err := fr.Stat()
-		if err != nil {
-			return err
-		}
-		cPath := cleanPath(path)
-		fmt.Printf("%v -> %v\n", path, cPath)
-		err = tgz.Write(archiver.File{FileInfo: archiver.FileInfo{
-			FileInfo: fileInfo, CustomName:cPath},
-			ReadCloser: fr,
-		})
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	for _, subPath := range srcPaths {
-		if err := filepath.Walk(subPath, walkFn); err != nil {
-				errs <- err
-				return
-		}
-		wg.Done()
-	}
-}
-
-func createAndExtract(session *ssh.Session, destPath string, wg *sync.WaitGroup, errs chan <-error) {
-	defer wg.Done()
-	defer session.Wait()
-	err := session.Start("tar -xzf - -C " + destPath)
-	if err != nil {
-		errs <- err
-	}
-}
-
-func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile string, noVerify bool) (*ssh.Session, error) {
-	pKey, err := ioutil.ReadFile(sshKeyPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("ssh key path %v: ErrNotExist", sshKeyPath)
-		} else if errors.Is(err, os.ErrPermission) {
-			return nil, fmt.Errorf("ssh key path %v: ErrPermission", sshKeyPath)
-		}
-		return nil, err
-	}
-	signer, err := ssh.ParsePrivateKey(pKey);
-	if err != nil {
-		return nil, fmt.Errorf("could not parse private key %v", sshKeyPath)
-	}
-	var hostKeyCallBack ssh.HostKeyCallback
-	if noVerify {
-		hostKeyCallBack = ssh.InsecureIgnoreHostKey()
-	} else if knownHostsFile != "" {
-		hostKeyCallBack, err = knownhosts.New(knownHostsFile);
-		if err != nil {
-			return nil, fmt.Errorf("could not create hostkeycallback function: %v", err)
-		}
-	} else {
-		hostKeyCallBack, err = knownhosts.New()
-		if err != nil {
-			return nil, fmt.Errorf("could not create hostkeycallback function: %v", err)
-		}
-	}
-	clientConfig := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: hostKeyCallBack,
-		Timeout:         time.Minute,
-	}
-	client, err := ssh.Dial("tcp", server+ ":" + strconv.Itoa(port), clientConfig)
-	if err != nil {
-		return nil, err
-	}
-	session, err := client.NewSession()
-	if err != nil {
-		return nil, err
-	}
-	return session, nil
 }
