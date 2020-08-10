@@ -38,18 +38,6 @@ func cleanPath(path string) string {
 	return newPath
 }
 
-type BufferedWriteCloser struct {
-	f *os.File
-	*bufio.Writer
-}
-
-func (bwc *BufferedWriteCloser) Close() error {
-	if err := bwc.Flush(); err != nil {
-		return err
-	}
-	return bwc.f.Close()
-}
-
 func processWg(wg *sync.WaitGroup, finished chan bool, errs chan error) error {
 	wg.Wait()
 	close(finished)
