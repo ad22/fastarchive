@@ -47,6 +47,7 @@ func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGr
 			defer writer.Close()
 		}
 	}
+
 	walkFn := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -59,7 +60,7 @@ func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGr
 		}
 
 		cPath := cleanPath(path)
-		fmt.Printf("%v -> %v\n", path, cPath)
+		//fmt.Printf("%v -> %v\n", path, cPath)
 
 		for _, writer := range writers {
 			fr, err := os.Open(path)
@@ -87,5 +88,7 @@ func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGr
 			errs <- err
 			return
 		}
+		fmt.Println("path " + fmt.Sprint(subPath) + " streamed to " + fmt.Sprint(len(writers)) + " writer(s)")
 	}
+
 }

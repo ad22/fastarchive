@@ -170,5 +170,5 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println("successfully uploaded")
+	fmt.Println("done.")
 }
