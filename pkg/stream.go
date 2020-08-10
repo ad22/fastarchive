@@ -39,6 +39,32 @@ func generateZipWriter(writer io.Writer) (*archiver.Zip, error) {
 	return &z, err
 }
 
+func generateLocalFileZipWriter(zp string) (*archiver.Zip, *os.File, error) {
+	zf, err := os.Create(zp)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	z, err := generateZipWriter(WriteFakeCloser{zf})
+	if err != nil {
+		return nil, nil, err
+	}
+	return z, zf, nil
+}
+
+func generateLocalFileTarGzWriter(tp string) (*archiver.TarGz, *os.File, error) {
+	tf, err := os.Create(tp)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tfw, err := generateTarGzWriter(WriteFakeCloser{tf})
+	if err != nil {
+		return nil, nil, err
+	}
+	return tfw, tf, nil
+}
+
 func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGroup, errs chan <-error, close bool, closePipe io.WriteCloser) {
 	defer wg.Done()
 	if close {

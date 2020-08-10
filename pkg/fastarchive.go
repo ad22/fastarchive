@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-var fromFile, destPath, server, userName, sshKeyPath, knownHostsFile, createLocalZipFileName, createLocalTarGzFileName string
+var fromFile, destPath, server, userName, sshKeyPath, knownHostsFile, localZipFileName, localTarGzFileName string
 var noVerify, createLocalZip, createLocalTarGz bool
 var port int
 var paths []string
@@ -36,8 +36,8 @@ func init() {
 
 	flag.BoolVar(&createLocalZip, "createzip", false, "Create a zip file in the current working directly with all contents streamed, and archive it alongside")
 	flag.BoolVar(&createLocalTarGz, "createtargz", false, "Create a tar gz file in the current working directly with all contents streamed, and archive it alongside")
-	flag.StringVar(&createLocalZipFileName, "zipname", "", "Name of zip file created when -createzip is used")
-	flag.StringVar(&createLocalTarGzFileName, "targzname", "", "Name of tar gz file created when -createtargz is used")
+	flag.StringVar(&localZipFileName, "zipname", "", "Name of zip file created when -createzip is used")
+	flag.StringVar(&localTarGzFileName, "targzname", "", "Name of tar gz file created when -createtargz is used")
 
 	flag.Parse()
 	paths = flag.Args()
@@ -63,10 +63,10 @@ func init() {
 		}
 	}
 
-	if createLocalZip && createLocalZipFileName == "" {
+	if createLocalZip && localZipFileName == "" {
 		log.Fatalln("-zipname is required when -createzip is specified")
 	}
-	if createLocalTarGz && createLocalTarGzFileName == "" {
+	if createLocalTarGz && localTarGzFileName == "" {
 		log.Fatalln("-targzname is required when -createtargz is specified")
 	}
 }
@@ -96,45 +96,40 @@ func main() {
 	}
 
 	var writers []archiver.Writer
-	tw, err := generateTarGzWriter(*stdinPipe)
+	tpw, err := generateTarGzWriter(*stdinPipe)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	writers = append(writers, tw)
+	writers = append(writers, tpw)
 
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	var z *archiver.Zip
+	var tempZipPath string
+	var zfw *archiver.Zip
+	var zf *os.File
 	if createLocalZip {
-		zp := path.Join(wd, createLocalZipFileName)
-		zf, err := os.Create(zp)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		defer zf.Close()
-
-		z, err = generateZipWriter(WriteFakeCloser{zf})
-		if err != nil {
-			log.Fatalln(err)
-		}
-		writers = append(writers, z)
+		tempZipPath = path.Join(wd, localZipFileName)
+		zfw, zf, err = generateLocalFileZipWriter(tempZipPath)
+		defer func() {
+			os.Remove(tempZipPath)
+			zf.Close()
+		}()
+		writers = append(writers, zfw)
 	}
 
+	var tempTarGzPath string
 	var tfw *archiver.TarGz
-	if createLocalTarGz {
-		tp := path.Join(wd, createLocalTarGzFileName)
-		tf, err := os.Create(tp)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		defer tf.Close()
-		tfw, err = generateTarGzWriter(WriteFakeCloser{tf})
-		if err != nil {
-			log.Fatalln(err)
-		}
+	var tf *os.File
+	if createLocalZip {
+		tempTarGzPath = path.Join(wd, localTarGzFileName)
+		tfw, tf, err = generateLocalFileTarGzWriter(tempTarGzPath)
+		defer func() {
+			os.Remove(tempTarGzPath)
+			tf.Close()
+		}()
 		writers = append(writers, tfw)
 	}
 
@@ -143,27 +138,27 @@ func main() {
 	go walkAndStream(paths, writers, &swg, swgErrs, false, nil)
 
 	err = processWg(&swg, swgFinished, swgErrs)
+	zfw.Close()
 	tfw.Close()
-	z.Close()
 	if err != nil {
-		tw.Close()
+		tpw.Close()
 		log.Fatalln(err)
 	}
 
 	var finalPaths []string
-	tw.CompressionLevel = 0
-	finalWriters := []archiver.Writer{tw}
+	tpw.CompressionLevel = 0
+	finalWriters := []archiver.Writer{tpw}
 	if createLocalZip || createLocalTarGz {
 		wg.Add(1)
 		if createLocalZip {
-			finalPaths = append(finalPaths, createLocalZipFileName)
+			finalPaths = append(finalPaths, localZipFileName)
 		}
 		if createLocalTarGz {
-			finalPaths = append(finalPaths, createLocalTarGzFileName)
+			finalPaths = append(finalPaths, localTarGzFileName)
 		}
 		go walkAndStream(finalPaths, finalWriters, &wg, wgErrs, true, *stdinPipe)
 	} else {
-		tw.Close()
+		tpw.Close()
 	}
 
 	err = processWg(&wg, wgFinished, wgErrs)
