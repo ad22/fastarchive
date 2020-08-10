@@ -58,7 +58,8 @@ func init() {
 		log.Fatalln("only one of the options: -fromfile or space separated file paths is allowed")
 	}
 	if fromFile != "" {
-		paths, err = readLinesFromFile(fromFile); if err != nil {
+		paths, err = readLinesFromFile(fromFile)
+		if err != nil {
 			log.Fatalln(err)
 		}
 	}

@@ -65,7 +65,7 @@ func generateLocalFileTarGzWriter(tp string) (*archiver.TarGz, *os.File, error) 
 	return tfw, tf, nil
 }
 
-func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGroup, errs chan <-error, close bool, closePipe io.WriteCloser) {
+func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGroup, errs chan<- error, close bool, closePipe io.WriteCloser) {
 	defer wg.Done()
 	if close {
 		defer closePipe.Close()

@@ -23,7 +23,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 		}
 		return nil, err
 	}
-	signer, err := ssh.ParsePrivateKey(pKey);
+	signer, err := ssh.ParsePrivateKey(pKey)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse private key %v", sshKeyPath)
 	}
@@ -31,7 +31,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 	if noVerify {
 		hostKeyCallBack = ssh.InsecureIgnoreHostKey()
 	} else if knownHostsFile != "" {
-		hostKeyCallBack, err = knownhosts.New(knownHostsFile);
+		hostKeyCallBack, err = knownhosts.New(knownHostsFile)
 		if err != nil {
 			return nil, fmt.Errorf("could not create hostkeycallback function: %v", err)
 		}
@@ -49,7 +49,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 		HostKeyCallback: hostKeyCallBack,
 		Timeout:         time.Minute,
 	}
-	client, err := ssh.Dial("tcp", server+ ":" + strconv.Itoa(port), clientConfig)
+	client, err := ssh.Dial("tcp", server+":"+strconv.Itoa(port), clientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -60,8 +60,7 @@ func createSSHSession(user, server string, port int, sshKeyPath, knownHostsFile 
 	return session, nil
 }
 
-
-func sshCommandWait(command string, session *ssh.Session, wg *sync.WaitGroup, errs chan <-error) {
+func sshCommandWait(command string, session *ssh.Session, wg *sync.WaitGroup, errs chan<- error) {
 	defer wg.Done()
 	defer session.Wait()
 	err := session.Start(command)
