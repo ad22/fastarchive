@@ -69,6 +69,11 @@ func sshCommandWait(command string, session *ssh.Session, wg *sync.WaitGroup, er
 	}
 }
 
+func sshOneShotCommand(command string, session *ssh.Session) error {
+	err := session.Run(command)
+	return err
+}
+
 func sshStdinPipe(session *ssh.Session) (*io.WriteCloser, error) {
 	stdin, err := session.StdinPipe()
 	if err != nil {

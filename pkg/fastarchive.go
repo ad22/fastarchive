@@ -73,6 +73,18 @@ func init() {
 }
 
 func main() {
+	if destPath != "." {
+		initSession, err := createSSHSession(userName, server, port, sshKeyPath, knownHostsFile, noVerify)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		defer initSession.Close()
+		err = sshOneShotCommand("mkdir -p " + destPath, initSession)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		fmt.Println("created destination path " + destPath + " on server " + server)
+	}
 	session, err := createSSHSession(userName, server, port, sshKeyPath, knownHostsFile, noVerify)
 	if err != nil {
 		log.Fatalln(err)
@@ -139,8 +151,12 @@ func main() {
 	go walkAndStream(paths, writers, &swg, swgErrs, false, nil)
 
 	err = processWg(&swg, swgFinished, swgErrs)
-	zfw.Close()
-	tfw.Close()
+	if zfw != nil {
+		zfw.Close()
+	}
+	if tfw != nil {
+		tfw.Close()
+	}
 	if err != nil {
 		tpw.Close()
 		log.Fatalln(err)
@@ -158,13 +174,13 @@ func main() {
 			finalPaths = append(finalPaths, localTarGzFileName)
 		}
 		go walkAndStream(finalPaths, finalWriters, &wg, wgErrs, true, *stdinPipe)
+		err = processWg(&wg, wgFinished, wgErrs)
+		if err != nil {
+			log.Fatalln(err)
+		}
 	} else {
 		tpw.Close()
 	}
 
-	err = processWg(&wg, wgFinished, wgErrs)
-	if err != nil {
-		log.Fatalln(err)
-	}
 	fmt.Println("done.")
 }
