@@ -136,7 +136,7 @@ func main() {
 	var tempTarGzPath string
 	var tfw *archiver.TarGz
 	var tf *os.File
-	if createLocalZip {
+	if createLocalTarGz {
 		tempTarGzPath = path.Join(wd, localTarGzFileName)
 		tfw, tf, err = generateLocalFileTarGzWriter(tempTarGzPath)
 		defer func() {
