@@ -110,11 +110,20 @@ func walkAndStream(srcPaths []string, writers []archiver.Writer, wg *sync.WaitGr
 	}
 
 	for _, subPath := range srcPaths {
-		if err := filepath.Walk(subPath, walkFn); err != nil {
+		matches, err := filepath.Glob(subPath)
+		if err != nil {
 			errs <- err
 			return
 		}
-		fmt.Println("path " + fmt.Sprint(subPath) + " streamed to " + fmt.Sprint(len(writers)) + " writer(s)")
+		if matches != nil {
+			for _, match := range matches {
+				if err := filepath.Walk(match, walkFn); err != nil{
+					errs <- err
+					return
+				}
+				fmt.Println("path " + fmt.Sprint(match) + " streamed to " + fmt.Sprint(len(writers)) + " writer(s)")
+			}
+		}
 	}
 
 }
