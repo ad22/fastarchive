@@ -4,7 +4,7 @@ that are chained together much like *nix pipes, resulting in no intermediate buf
 
 The use case for this was to support file transfer in a large CI/CD deployment, where 1000's of files
 were required to be compressed, as well as transferred individually to an archive server, on multiple jobs.
-There was also a requirement for cross platform (Linux/Windows) utilities, and TAR+SSH+pipes (MinGW32) 
+There was also a requirement for cross platform (Linux/Windows) function, and TAR+SSH+pipes (MinGW) 
 has problems running correctly on Windows.
 
 #### Description<br>
