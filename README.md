@@ -1,13 +1,15 @@
 # fastarchive: tar+gzip over ssh in golang
 This utility provides a go implementation of tar over SSH. It uses the io.Writer and io.Reader interfaces
-that are chained together much like *nix pipes, resulting in no intermediate buffering or save. <br>
+that are chained together much like *nix pipes, resulting in no intermediate buffering. <br>
 
 The use case for this was to support file transfer in a large CI/CD deployment, where 1000's of files
 were required to be compressed, as well as transferred individually to an archive server, on multiple jobs.
+There was also a requirement for cross platform (Linux/Windows) utilities, and TAR+SSH+pipes (MinGW32) 
+has problems running correctly on Windows.
 
 #### Description<br>
 This tool generates a stream of tar+gz over an SSH pipe, as well as writes to a compressed zip and/or 
-tar archive (if selected), in a single pass of the given directory. It then transfer the zip and tar
+tar archive (if selected), in a single pass of the given directory. It transfers the zip and tar
 over the same SSH connection<br>
 
 #### Example<br>
